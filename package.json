@@ -1,0 +1,14 @@
+{
+  "name": "case-quiz-competition",
+  "version": "1.0.0",
+  "private": true,
+  "description": "病例答题比赛系统:大屏幕展示 + 主持人控制台 + 手机答题端",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "qrcode": "^1.5.3"
+  }
+}

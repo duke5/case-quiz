@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>大屏幕展示</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+</head>
+<body>
+
+<div id="big-wrap" class="big-wrap">
+  <div class="big-top">
+    <div>
+      <div class="org-name" id="org-name"></div>
+      <div class="title" id="event-name">病例答题比赛</div>
+    </div>
+    <div class="qnum" id="big-qnum">未开始</div>
+  </div>
+
+  <div class="big-content-row">
+    <div class="big-main" id="big-body"></div>
+
+    <div class="leaderboard-pane" id="leaderboard-pane">
+      <div class="lb-title">实时排行榜</div>
+      <div id="lb-list"></div>
+    </div>
+  </div>
+
+  <div class="scoring-rule-footer" id="scoring-rule-footer"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+function applyConfig(cfg){
+  if(!cfg) return;
+  document.title = cfg.ORG_NAME + ' · 大屏幕';
+  document.getElementById('org-name').textContent = cfg.ORG_NAME;
+  document.getElementById('event-name').textContent = cfg.EVENT_NAME;
+  document.getElementById('scoring-rule-footer').textContent =
+    `计分规则:答对 = ${cfg.SCORE_BASE}分基础分 + 剩余秒数 × ${cfg.SCORE_SPEED_BONUS_PER_SEC}(手速越快分越高);答错或超时未答 = 0分`;
+}
+applyConfig(window.APP_CONFIG);
+
+const socket = io();
+
+socket.on('config:update', (cfg)=>{
+  applyConfig(cfg);
+  // 参赛入口网址(二维码内容)可能在主持人管理页被改了,强制刷新图片,不能只等浏览器自然重新请求
+  const img = document.querySelector('.qrcode-img');
+  if(img) img.src = '/qrcode.png?t=' + Date.now();
+});
+
+let bigState = { idx:-1, phase:'waiting', timeLimit:20, startedAt:0, total:0, question:null };
+let latestLeaderboard = [];
+
+socket.on('state:update', (payload)=>{
+  bigState = payload;
+  renderBig();
+});
+socket.on('leaderboard:update', (list)=>{
+  latestLeaderboard = list;
+  renderLeaderboardPane();
+});
+
+setInterval(()=>{
+  if(bigState.phase==='question') renderCountdown();
+}, 200);
+
+function renderCountdown(){
+  const bar = document.getElementById('big-timerbar-el');
+  if(!bar) return;
+  const elapsed = (Date.now()-bigState.startedAt)/1000;
+  const remain = Math.max(0, bigState.timeLimit - elapsed);
+  const pct = Math.max(0, remain/bigState.timeLimit*100);
+  bar.style.width = pct+'%';
+  bar.classList.toggle('warn', pct<=50 && pct>20);
+  bar.classList.toggle('danger', pct<=20);
+}
+
+const LETTERS = ['A','B','C','D'];
+
+function renderBig(){
+  const numEl = document.getElementById('big-qnum');
+  const body = document.getElementById('big-body');
+  const lbPane = document.getElementById('leaderboard-pane');
+
+  if(bigState.phase==='waiting'){
+    numEl.textContent = '未开始';
+    body.innerHTML = `
+      <div class="waiting-wrap">
+        <div class="waiting-title">扫码进入答题</div>
+        <img class="qrcode-img" src="/qrcode.png" alt="扫码进入答题">
+        <div class="waiting-sub muted">等待主持人开始比赛…</div>
+      </div>`;
+    lbPane.classList.remove('hidden');
+    renderLeaderboardPane();
+    return;
+  }
+  if(bigState.phase==='finished'){
+    numEl.textContent = '比赛结束';
+    body.innerHTML = renderFinalHtml(latestLeaderboard);
+    lbPane.classList.add('hidden');
+    return;
+  }
+
+  lbPane.classList.remove('hidden');
+  const q = bigState.question;
+  numEl.textContent = '第 '+(bigState.idx+1)+' / '+bigState.total+' 题';
+  const revealing = bigState.phase==='reveal';
+  body.innerHTML = `
+    <div class="timerwrap"><div class="timerbar" id="big-timerbar-el"></div></div>
+    <div class="qtext">${q.text}</div>
+    <div class="options-grid">
+      ${[0,1,2,3].map(i=>`
+        <div class="opt ${revealing && i===q.correct ? 'correct':''}">
+          <div class="badge">${LETTERS[i]}</div><div>${q.options[i]}</div>
+        </div>`).join('')}
+    </div>
+  `;
+  renderLeaderboardPane();
+}
+
+// 给每个参赛者分配一个稳定的背景色,方便在长列表里快速区分
+const ROW_COLORS = [
+  'rgba(46,207,180,0.16)',
+  'rgba(245,166,35,0.16)',
+  'rgba(124,140,255,0.16)',
+  'rgba(230,120,180,0.14)',
+  'rgba(255,255,255,0.07)',
+  'rgba(46,207,180,0.08)',
+  'rgba(245,166,35,0.08)',
+  'rgba(124,140,255,0.08)',
+];
+function colorForId(id){
+  let h = 0;
+  for(let i=0;i<id.length;i++) h = (h*31 + id.charCodeAt(i)) >>> 0;
+  return ROW_COLORS[h % ROW_COLORS.length];
+}
+
+function renderLeaderboardPane(){
+  const list = document.getElementById('lb-list');
+  if(!list) return;
+  if(!latestLeaderboard.length){
+    list.innerHTML = '<div class="muted" style="padding:10px 4px;">暂无成绩</div>';
+    return;
+  }
+  list.innerHTML = latestLeaderboard.map((p,i)=>`
+    <div class="lead-item" style="background:${colorForId(p.id||p.name)}">
+      <span class="lead-rank">${i+1}</span>
+      <span class="lead-name">${p.name}</span>
+      <span class="lead-score">${p.score}</span>
+    </div>`).join('');
+}
+
+function renderFinalHtml(list){
+  const top3 = list.slice(0,3);
+  const rest = list.slice(3,30);
+  const podiumHtml = `<div class="podium">
+    ${top3[1]?`<div class="p p2"><div class="name">${top3[1].name}</div><div class="score">${top3[1].score}</div><div class="muted">第2名</div></div>`:''}
+    ${top3[0]?`<div class="p p1"><div class="name">${top3[0].name}</div><div class="score">${top3[0].score}</div><div class="muted">第1名</div></div>`:'<div class="muted">暂无成绩</div>'}
+    ${top3[2]?`<div class="p p3"><div class="name">${top3[2].name}</div><div class="score">${top3[2].score}</div><div class="muted">第3名</div></div>`:''}
+  </div>`;
+  const restHtml = rest.length ? '<div class="rest-list">'+rest.map((p,i)=>`<div class="lead-item" style="background:${colorForId(p.id||p.name)}"><span class="lead-rank">${i+4}</span><span class="lead-name">${p.name}</span><span class="lead-score">${p.score}</span></div>`).join('')+'</div>' : '';
+  return `<div class="final-wrap"><h2>🏆 最终排名</h2>${podiumHtml}${restHtml}</div>`;
+}
+</script>
+</body>
+</html>

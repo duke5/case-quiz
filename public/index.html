@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>主持人控制台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+</head>
+<body>
+
+<div class="open-screen-bar">
+  <button class="secondary open-screen-btn" onclick="window.open('/screen.html','_blank')">🖥️ 打开大屏幕(新标签页)</button>
+</div>
+
+<div id="auth-gate" class="center">
+  <div class="card auth-card">
+    <div class="org-name-landing muted" id="org-name"></div>
+    <h2 style="margin-top:0;">主持人控制台 · 密码验证</h2>
+    <p class="muted">仅授权人员可进入,请输入密码</p>
+    <input type="password" id="pwd-input" placeholder="请输入主持人密码" onkeydown="if(event.key==='Enter')doAuth()">
+    <button onclick="doAuth()" style="width:100%;">进入</button>
+    <div class="error-text" id="auth-error"></div>
+  </div>
+</div>
+
+<div id="host-wrap" class="host-wrap hidden">
+  <h2>主持人控制台</h2>
+
+  <div class="host-row">
+    <label class="muted">参赛入口网址(大屏幕二维码指向的地址):</label>
+  </div>
+  <div class="host-row">
+    <input type="text" id="site-url-input" placeholder="例如 http://192.168.1.100:3000 或 https://your-app.onrender.com" style="flex:1; min-width:260px;">
+    <button class="secondary" onclick="updateSiteUrl()">更新并重新生成二维码</button>
+  </div>
+  <div class="error-text" id="site-url-msg"></div>
+
+  <div class="host-row" style="margin-top:22px;">
+    <label class="muted">每题答题时间(秒):</label>
+    <input type="number" id="time-limit" value="20" min="5" max="120" style="width:90px;">
+  </div>
+  <div class="host-row">
+    <button id="btn-next" onclick="hostAction('next')">开始 / 下一题</button>
+    <button class="secondary" id="btn-reveal" onclick="hostAction('reveal')">公布答案</button>
+    <button class="secondary" id="btn-finish" onclick="hostAction('finish')">结束比赛(显示最终排名)</button>
+  </div>
+  <div class="host-row">
+    <button class="secondary" onclick="hostAction('reload_questions')">重新加载题库(改完 questions.md 后点这个)</button>
+    <button class="secondary" onclick="hostAction('reload_config')">重新加载配置(改完 config.js 后点这个)</button>
+  </div>
+  <div class="host-row">
+    <button class="danger" onclick="if(confirm('确定要重置比赛并清空所有成绩吗?'))hostAction('reset')">重置比赛(清空成绩,测试用)</button>
+  </div>
+  <div class="error-text" id="action-error"></div>
+  <div class="host-status">
+    <div class="stat"><div class="n" id="host-idx">-</div><div class="muted">当前题号 / 总数</div></div>
+    <div class="stat"><div class="n" id="host-phase">waiting</div><div class="muted">当前阶段</div></div>
+  </div>
+  <div class="host-qpreview" id="host-qpreview">点击"开始 / 下一题"进入第 1 题</div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+if (window.APP_CONFIG) {
+  document.title = window.APP_CONFIG.ORG_NAME + ' · 主持人控制台';
+  document.getElementById('org-name').textContent = window.APP_CONFIG.ORG_NAME;
+}
+
+const socket = io();
+let authed = false;
+let myPassword = '';
+
+function doAuth(){
+  const pwd = document.getElementById('pwd-input').value;
+  socket.emit('auth', { role:'host', password: pwd }, (res)=>{
+    if(res && res.ok){
+      authed = true;
+      myPassword = pwd;
+      document.getElementById('auth-gate').classList.add('hidden');
+      document.getElementById('host-wrap').classList.remove('hidden');
+      if(res.siteUrl) document.getElementById('site-url-input').value = res.siteUrl;
+    } else {
+      document.getElementById('auth-error').textContent = '密码错误,请重试';
+    }
+  });
+}
+
+function updateSiteUrl(){
+  const url = document.getElementById('site-url-input').value.trim();
+  const msg = document.getElementById('site-url-msg');
+  msg.textContent = '更新中…';
+  msg.style.color = '';
+  socket.emit('host:action', { password: myPassword, action: 'set_site_url', siteUrl: url }, (res)=>{
+    if(res && res.ok){
+      msg.textContent = '已更新为 ' + res.siteUrl + ',大屏幕二维码已自动刷新,不用手动重启服务';
+      msg.style.color = 'var(--accent)';
+    } else {
+      msg.textContent = (res && res.error) || '更新失败';
+      msg.style.color = 'var(--danger)';
+    }
+  });
+}
+
+const LETTERS = ['A','B','C','D'];
+let hostState = { idx:-1, phase:'waiting', total:0, question:null };
+
+socket.on('state:update', (payload)=>{
+  hostState = payload;
+  renderHost();
+});
+
+function renderHost(){
+  document.getElementById('host-idx').textContent = hostState.idx>=0 ? (hostState.idx+1)+' / '+hostState.total : '-';
+  document.getElementById('host-phase').textContent = hostState.phase;
+  const preview = document.getElementById('host-qpreview');
+  if(hostState.idx>=0 && hostState.question){
+    const q = hostState.question;
+    const answerLine = (q.correct!==undefined) ? `<br><span class="ans">正确答案:${LETTERS[q.correct]}. ${q.options[q.correct]}</span>` : '<br><span class="muted">(公布答案前,此处不显示正确项)</span>';
+    preview.innerHTML = `第${hostState.idx+1}题:${q.text}${answerLine}`;
+  } else {
+    preview.textContent = '点击"开始 / 下一题"进入第 1 题';
+  }
+  document.getElementById('btn-reveal').disabled = (hostState.phase!=='question');
+  document.getElementById('btn-finish').disabled = !(hostState.idx===hostState.total-1 && hostState.phase==='reveal');
+}
+
+function hostAction(action){
+  const timeLimit = document.getElementById('time-limit').value;
+  document.getElementById('action-error').textContent = '';
+  socket.emit('host:action', { password: myPassword, action, timeLimit }, (res)=>{
+    if(!res || !res.ok){
+      document.getElementById('action-error').textContent = (res && res.error) || '操作失败';
+    }
+  });
+}
+</script>
+</body>
+</html>

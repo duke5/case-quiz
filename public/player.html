@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>参赛者答题 · 病例答题比赛</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="format-detection" content="telephone=no,email=no,address=no">
+<meta name="x5-fullscreen" content="true">
+<meta name="x5-page-mode" content="app">
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<style>
+  /* 微信内置浏览器兼容:禁止长按弹出复制/识别菜单、禁止双指缩放误触、去掉点击高亮闪烁 */
+  html, body{
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain; /* 防止下拉露出白底/触发页面刷新 */
+    touch-action: manipulation;      /* 去掉300ms点击延迟 */
+  }
+  * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  input, textarea { -webkit-user-select: text; user-select: text; } /* 输入框本身仍可正常输入/选择 */
+  .player-wrap{
+    min-height: calc(var(--vh, 1vh) * 100);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom)); /* 兼容iPhone底部安全区 */
+  }
+</style>
+</head>
+<body>
+
+<div id="entry-wrap" class="center">
+  <div class="card" style="max-width:400px; width:100%; text-align:center;">
+    <h2 style="margin-top:0;">进入答题</h2>
+    <p class="muted">请输入你的姓名</p>
+    <input type="text" id="name-input" placeholder="姓名" style="width:100%; margin:16px 0;" maxlength="20" onkeydown="if(event.key==='Enter')playerJoin()">
+    <button onclick="playerJoin()" style="width:100%;">进入答题</button>
+  </div>
+</div>
+
+<div id="game-wrap" class="player-wrap hidden">
+  <div class="player-header">
+    <div id="player-name-display" class="muted"></div>
+    <div class="player-score" id="player-score">0 分</div>
+  </div>
+  <div class="toprow"><span id="player-qnum"></span><span id="player-timer-text"></span></div>
+  <div class="timerwrap"><div class="timerbar" id="player-timerbar"></div></div>
+  <div id="player-body"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+if (window.APP_CONFIG) { document.title = window.APP_CONFIG.ORG_NAME + ' · 答题'; }
+
+// 微信内置浏览器(以及部分安卓浏览器)对 100vh 的计算不可靠,工具栏一遮挡就会跳动/截断,
+// 用 JS 实时计算真实视口高度写成 CSS 变量,配合上面 calc(var(--vh,1vh)*100) 使用更稳
+function setVh(){ document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px'); }
+setVh();
+window.addEventListener('resize', setVh);
+window.addEventListener('orientationchange', setVh);
+
+// 持久化的参赛者身份:存在 localStorage,断线重连、切后台被系统回收再打开、手动刷新页面都不会丢身份/丢分
+// (这是本站点自己的独立页面,不是嵌在 Claude 里的 artifact,可以正常使用 localStorage)
+function getOrCreatePlayerId(){
+  try{
+    let id = localStorage.getItem('quizPlayerId');
+    if(!id){
+      id = (crypto.randomUUID ? crypto.randomUUID() : ('p_' + Date.now() + '_' + Math.random().toString(36).slice(2)));
+      localStorage.setItem('quizPlayerId', id);
+    }
+    return id;
+  }catch(e){
+    // 隐私模式/存储被禁用等极端情况下退化为本次会话临时ID(仍可正常答题,只是刷新页面会当新玩家)
+    return 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  }
+}
+const myPlayerId = getOrCreatePlayerId();
+
+const socket = io();
+const LETTERS = ['A','B','C','D'];
+let joined = false;
+let playerName = '';
+let pState = { idx:-1, phase:'waiting', total:0, question:null, timeLimit:20, startedAt:0 };
+let answeredIdx = -1;      // 已作答的题目 idx(未作答为 -1)
+let lastGain = null, lastCorrect = null; // 本题的作答结果;null 表示"不确定"(比如断线重连后无法得知)
+let myScore = 0;
+
+function doJoin(name, isAutoRejoin){
+  socket.emit('player:join', { name, playerId: myPlayerId }, (res)=>{
+    if(res && res.ok){
+      joined = true;
+      playerName = name;
+      try{ localStorage.setItem('quizPlayerName', name); }catch(e){}
+      myScore = res.score || 0;
+      document.getElementById('entry-wrap').classList.add('hidden');
+      document.getElementById('game-wrap').classList.remove('hidden');
+      document.getElementById('player-name-display').textContent = name;
+      document.getElementById('player-score').textContent = myScore + ' 分';
+      render();
+    } else if(!isAutoRejoin){
+      alert('加入失败,请重试');
+    }
+  });
+}
+
+function playerJoin(){
+  const name = document.getElementById('name-input').value.trim();
+  if(!name){ alert('请输入姓名'); return; }
+  doJoin(name, false);
+}
+
+// 页面一打开就检查:如果之前已经用同一个手机成功进入过(存过姓名),这次直接自动重新加入,不用再手动填一遍
+(function tryAutoRejoinOnLoad(){
+  let savedName = null;
+  try{ savedName = localStorage.getItem('quizPlayerName'); }catch(e){}
+  if(savedName){
+    socket.once('connect', () => doJoin(savedName, true));
+  }
+})();
+
+// socket.io 断线后会自动重连,但重连成功后是一个"新连接"，服务端并不知道这个新连接对应哪个玩家,
+// 必须重新发一次 player:join(带着同一个 playerId)服务端才能把这条连接和原来的分数记录关联上
+socket.io.on('reconnect', () => {
+  if(joined && playerName){
+    doJoin(playerName, true);
+  }
+});
+
+let timeUpHandled = false; // 本题是否已经因超时而切换过界面,避免每200ms重复触发渲染
+
+socket.on('state:update', (payload)=>{
+  const oldIdx = pState.idx;
+  const changed = (payload.idx !== pState.idx) || (payload.phase !== pState.phase);
+  pState = payload;
+  if(changed){
+    timeUpHandled = false;
+    if(payload.idx !== oldIdx){
+      // 换新题了,清掉上一题的作答反馈,避免"看起来"沿用到新题上
+      lastGain = null;
+      lastCorrect = null;
+    }
+    if(joined) render();
+  }
+});
+
+setInterval(()=>{
+  if(!joined) return;
+  if(pState.phase==='question') renderCountdown();
+}, 200);
+
+function renderCountdown(){
+  const bar = document.getElementById('player-timerbar');
+  const txt = document.getElementById('player-timer-text');
+  if(!bar) return;
+  const elapsed = (Date.now()-pState.startedAt)/1000;
+  const remain = Math.max(0, pState.timeLimit - elapsed);
+  const pct = Math.max(0, remain/pState.timeLimit*100);
+  bar.style.width = pct+'%';
+  bar.classList.toggle('warn', pct<=50 && pct>20);
+  bar.classList.toggle('danger', pct<=20);
+  if(txt) txt.textContent = Math.ceil(remain)+' 秒';
+
+  // 时间到了但还没作答:立即切走答题界面,不再允许点击选项(避免"打开答题页发现还能提交"的漏洞)
+  if(remain<=0 && !timeUpHandled && answeredIdx!==pState.idx){
+    timeUpHandled = true;
+    render();
+  }
+}
+
+function isTimeUp(){
+  return (Date.now()-pState.startedAt)/1000 >= pState.timeLimit;
+}
+
+function render(){
+  const body = document.getElementById('player-body');
+  const qnumEl = document.getElementById('player-qnum');
+
+  if(pState.phase==='waiting'){
+    qnumEl.textContent = '';
+    body.innerHTML = '<div class="player-status" style="margin-top:20vh;">等待主持人开始比赛…</div>';
+    return;
+  }
+  if(pState.phase==='finished'){
+    qnumEl.textContent = '比赛结束';
+    body.innerHTML = `<div class="player-feedback">
+      <div style="font-size:22px;">最终成绩</div>
+      <div class="pts ok">${myScore} 分</div>
+      <div class="muted">感谢参与本次病例答题比赛!</div>
+    </div>`;
+    return;
+  }
+
+  const q = pState.question;
+  qnumEl.textContent = '第 '+(pState.idx+1)+' / '+pState.total+' 题';
+
+  if(pState.phase==='question'){
+    if(answeredIdx === pState.idx){
+      body.innerHTML = '<div class="player-status">已提交答案,等待主持人公布…</div>';
+    } else if(isTimeUp()){
+      // 覆盖两种情况:1) 倒计时期间就一直没点 2) 打开/刷新页面时时间其实已经到了
+      body.innerHTML = '<div class="player-status">本题时间已到,等待主持人公布…</div>';
+    } else {
+      body.innerHTML = `<div class="player-qtext">${q.text}</div>
+        <div class="player-opts">
+          ${[0,1,2,3].map(i=>`<button class="player-opt" onclick="submitAnswer(${i})"><div class="badge">${LETTERS[i]}</div><div>${q.options[i]}</div></button>`).join('')}
+        </div>`;
+    }
+    return;
+  }
+
+  if(pState.phase==='reveal'){
+    if(answeredIdx !== pState.idx){
+      body.innerHTML = `<div class="player-feedback">
+        <div class="pts no">未作答</div>
+        <div class="muted">正确答案:${LETTERS[q.correct]}. ${q.options[q.correct]}</div>
+      </div>`;
+    } else if(lastCorrect === null){
+      // 之前提交过,但这次是断线重连/换设备打开等情况,本地不知道当时对错——不瞎猜,给中性提示
+      body.innerHTML = `<div class="player-feedback">
+        <div class="pts">已提交本题</div>
+        <div class="muted">正确答案:${LETTERS[q.correct]}. ${q.options[q.correct]}</div>
+      </div>`;
+    } else {
+      body.innerHTML = `<div class="player-feedback">
+        <div class="pts ${lastCorrect?'ok':'no'}">${lastCorrect? '回答正确 +'+lastGain+' 分' : '回答错误'}</div>
+        <div class="muted">正确答案:${LETTERS[q.correct]}. ${q.options[q.correct]}</div>
+      </div>`;
+    }
+  }
+}
+
+function submitAnswer(optIdx){
+  if(pState.phase!=='question') return;
+  if(answeredIdx === pState.idx) return;
+  if(isTimeUp()){ render(); return; } // 点击瞬间恰好超时,直接刷新界面,不发请求
+  answeredIdx = pState.idx;
+  document.getElementById('player-body').innerHTML = '<div class="player-status">提交中…</div>';
+  socket.emit('player:answer', { idx: pState.idx, optIdx }, (res)=>{
+    if(res && res.ok){
+      lastGain = res.gained;
+      lastCorrect = res.correct;
+      myScore = res.totalScore;
+      document.getElementById('player-score').textContent = myScore+' 分';
+    } else if(res && res.error === '本题已提交过,不能重复作答'){
+      // 之前(比如上一次连接/其他设备)已经交过了,不要退回选项界面让用户再点一次
+      // 保持 answeredIdx = pState.idx,只是不知道当时对错(lastCorrect 留空,由 render() 里的中性提示处理)
+      lastGain = null;
+      lastCorrect = null;
+    } else {
+      answeredIdx = -1; // 其它失败(比如网络错误、题目已切换)才允许重试
+    }
+    render();
+  });
+}
+</script>
+</body>
+</html>
