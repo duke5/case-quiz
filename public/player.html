@@ -38,7 +38,10 @@
 
 <div id="game-wrap" class="player-wrap hidden">
   <div class="player-header">
-    <div id="player-name-display" class="muted"></div>
+    <div class="player-header-left">
+      <div id="player-name-display" class="muted"></div>
+      <button class="exit-link" onclick="exitAndRelogin()">退出</button>
+    </div>
     <div class="player-score" id="player-score">0 分</div>
   </div>
   <div class="toprow"><span id="player-qnum"></span><span id="player-timer-text"></span></div>
@@ -105,6 +108,18 @@ function playerJoin(){
   const name = document.getElementById('name-input').value.trim();
   if(!name){ alert('请输入姓名'); return; }
   doJoin(name, false);
+}
+
+// 退出答题:清掉本地保存的身份(姓名+ID),刷新页面后会回到"输入姓名"界面。
+// 重新登录时会生成一个全新的身份,服务端把新姓名当成一个全新的参赛记录来计分,
+// 不会延续退出前那个身份的分数——适合"这台手机换了个人用"或者"重新登记纠正姓名"这种场景。
+function exitAndRelogin(){
+  if(!confirm('确定要退出吗?退出后需要重新填写姓名进入,将计为一条全新的参赛记录,原来的成绩不会带过来。')) return;
+  try{
+    localStorage.removeItem('quizPlayerId');
+    localStorage.removeItem('quizPlayerName');
+  }catch(e){}
+  location.reload();
 }
 
 // 页面一打开就检查:如果之前已经用同一个手机成功进入过(存过姓名),这次直接自动重新加入,不用再手动填一遍

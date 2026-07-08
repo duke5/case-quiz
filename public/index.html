@@ -122,7 +122,7 @@ function renderHost(){
     preview.textContent = '点击"开始 / 下一题"进入第 1 题';
   }
   document.getElementById('btn-reveal').disabled = (hostState.phase!=='question');
-  document.getElementById('btn-finish').disabled = !(hostState.idx===hostState.total-1 && hostState.phase==='reveal');
+  // "结束比赛"不再限制必须到最后一题+已公布答案才能点——主持人随时可以提前结束
 }
 
 function hostAction(action){
