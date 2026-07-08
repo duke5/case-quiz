@@ -24,6 +24,10 @@
     <div class="leaderboard-pane" id="leaderboard-pane">
       <div class="lb-title">实时排行榜</div>
       <div id="lb-list"></div>
+      <div class="lb-qr-footer hidden" id="lb-qr-footer">
+        <img class="qrcode-img lb-qr-img" src="/qrcode.png" alt="扫码加入答题">
+        <div class="lb-qr-label">还没进入的<br>可扫码加入</div>
+      </div>
     </div>
   </div>
 
@@ -46,9 +50,10 @@ const socket = io();
 
 socket.on('config:update', (cfg)=>{
   applyConfig(cfg);
-  // 参赛入口网址(二维码内容)可能在主持人管理页被改了,强制刷新图片,不能只等浏览器自然重新请求
-  const img = document.querySelector('.qrcode-img');
-  if(img) img.src = '/qrcode.png?t=' + Date.now();
+  // 参赛入口网址(二维码内容)可能在主持人管理页被改了,强制刷新所有二维码图片(大屏中间的+排行榜旁边的小的)
+  document.querySelectorAll('.qrcode-img').forEach(img => {
+    img.src = '/qrcode.png?t=' + Date.now();
+  });
 });
 
 let bigState = { idx:-1, phase:'waiting', timeLimit:20, startedAt:0, total:0, question:null };
@@ -84,6 +89,7 @@ function renderBig(){
   const numEl = document.getElementById('big-qnum');
   const body = document.getElementById('big-body');
   const lbPane = document.getElementById('leaderboard-pane');
+  const qrFooter = document.getElementById('lb-qr-footer');
 
   if(bigState.phase==='waiting'){
     numEl.textContent = '未开始';
@@ -94,6 +100,7 @@ function renderBig(){
         <div class="waiting-sub muted">等待主持人开始比赛…</div>
       </div>`;
     lbPane.classList.remove('hidden');
+    qrFooter.classList.add('hidden'); // 中间已经有一个大二维码了,侧边这个小的先不重复显示
     renderLeaderboardPane();
     return;
   }
@@ -105,6 +112,7 @@ function renderBig(){
   }
 
   lbPane.classList.remove('hidden');
+  qrFooter.classList.remove('hidden'); // 答题/公布阶段:常驻显示小二维码,方便迟到的人随时扫码加入
   const q = bigState.question;
   numEl.textContent = '第 '+(bigState.idx+1)+' / '+bigState.total+' 题';
   const revealing = bigState.phase==='reveal';
@@ -156,12 +164,19 @@ function renderLeaderboardPane(){
 function renderFinalHtml(list){
   const top3 = list.slice(0,3);
   const rest = list.slice(3,30);
+  const statLine = p => `<div class="podium-stat">✓${p.correct} 　✗${p.wrong} 　未答${p.unanswered}</div>`;
   const podiumHtml = `<div class="podium">
-    ${top3[1]?`<div class="p p2"><div class="name">${top3[1].name}</div><div class="score">${top3[1].score}</div><div class="muted">第2名</div></div>`:''}
-    ${top3[0]?`<div class="p p1"><div class="name">${top3[0].name}</div><div class="score">${top3[0].score}</div><div class="muted">第1名</div></div>`:'<div class="muted">暂无成绩</div>'}
-    ${top3[2]?`<div class="p p3"><div class="name">${top3[2].name}</div><div class="score">${top3[2].score}</div><div class="muted">第3名</div></div>`:''}
+    ${top3[1]?`<div class="p p2"><div class="name">${top3[1].name}</div><div class="score">${top3[1].score}</div>${statLine(top3[1])}<div class="muted">第2名</div></div>`:''}
+    ${top3[0]?`<div class="p p1"><div class="name">${top3[0].name}</div><div class="score">${top3[0].score}</div>${statLine(top3[0])}<div class="muted">第1名</div></div>`:'<div class="muted">暂无成绩</div>'}
+    ${top3[2]?`<div class="p p3"><div class="name">${top3[2].name}</div><div class="score">${top3[2].score}</div>${statLine(top3[2])}<div class="muted">第3名</div></div>`:''}
   </div>`;
-  const restHtml = rest.length ? '<div class="rest-list">'+rest.map((p,i)=>`<div class="lead-item" style="background:${colorForId(p.id||p.name)}"><span class="lead-rank">${i+4}</span><span class="lead-name">${p.name}</span><span class="lead-score">${p.score}</span></div>`).join('')+'</div>' : '';
+  const restHtml = rest.length ? '<div class="rest-list">'+rest.map((p,i)=>`
+    <div class="lead-item" style="background:${colorForId(p.id||p.name)}">
+      <span class="lead-rank">${i+4}</span>
+      <span class="lead-name">${p.name}</span>
+      <span class="lead-stats muted">✓${p.correct} ✗${p.wrong} 未答${p.unanswered}</span>
+      <span class="lead-score">${p.score}</span>
+    </div>`).join('')+'</div>' : '';
   return `<div class="final-wrap"><h2>🏆 最终排名</h2>${podiumHtml}${restHtml}</div>`;
 }
 </script>

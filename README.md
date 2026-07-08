@@ -42,16 +42,58 @@ npm start
 
 ## 三、如果想在互联网上用(比如参赛者不在同一WiFi,或想提前测试异地协作)
 
-可以免费部署到 [Render](https://render.com)、[Railway](https://railway.app) 等平台(有免费额度,一次性活动完全够用):
+可以免费部署到 [Render](https://render.com)(有免费额度,一次性活动完全够用)。详细步骤:
 
-1. 把整个 `quiz-app` 文件夹上传到 GitHub 仓库
-2. 在 Render 新建一个 Web Service,连接这个仓库,Build 命令填 `npm install`,启动命令填 `npm start`
-3. 部署成功后,**Render 会在服务详情页顶部直接显示分配给你的网址**,格式类似 `https://你的服务名-随机后缀.onrender.com`,创建服务的时候就能看到,不用等部署完成
-4. 拿到这个网址后,**不需要改代码、不需要重新部署**——直接打开网站根路径(主持人登录页),登录后在"参赛入口网址"那一栏,把 Render 给你的网址粘贴进去,点"更新并重新生成二维码",大屏幕的二维码会立刻自动刷新成新地址
-5. 密码记得通过环境变量 `HOST_PASSWORD` 覆盖成你自己的(不要用默认值),在 Render 的 Environment 设置里添加
-6. 参赛者扫大屏幕上的二维码即可,不需要在同一WiFi下
+### 第一步:把代码传到 GitHub(Render 需要从 Git 仓库拉代码)
 
-> 关于"网址会不会自动同步"的说明:主持人控制台里更新的网址会保存在服务器上的 `config.local.json` 文件里(不是改 `config.js` 本身),重启服务/重新部署后这个文件**在 Render 免费版上不保证一定保留**(免费版偶尔会重建容器)。如果重启后发现二维码变回了旧地址,回到主持人控制台重新粘贴一次网址、点更新即可,不影响正在进行的比赛数据(成绩不受影响,只是二维码指向的地址需要重新填一下)。如果想要一个"重启也不会丢"的默认值,把最终确定的网址也同步写进 `config.js` 里的 `SITE_URL` 字段,提交到 GitHub 仓库、让 Render 用这个新代码重新部署一次即可长期生效。
+如果你还没有 GitHub 账号,先在 [github.com](https://github.com) 免费注册一个。
+
+1. 在 GitHub 网站右上角点 `+` → `New repository`,起个名字(比如 `case-quiz`),不用勾选"添加 README",直接点 `Create repository`
+2. 在你解压好的 `quiz-app` 文件夹里打开终端(Mac 用"终端",Windows 用 Git Bash 或 PowerShell),依次执行:
+
+```bash
+git init
+git add .
+git commit -m "首次提交"
+git branch -M main
+git remote add origin https://github.com/你的用户名/case-quiz.git
+git push -u origin main
+```
+
+(如果没装过 git,先去 [git-scm.com](https://git-scm.com) 下载安装;`git push` 时会要求登录 GitHub 账号,按提示操作即可)
+
+### 第二步:在 Render 创建 Web Service
+
+1. 打开 [render.com](https://render.com),用 GitHub 账号直接登录(最省事,会自动帮你连上 GitHub)
+2. 登录后点右上角 `New` → `Web Service`
+3. 选择刚才创建的 `case-quiz` 仓库,点 `Connect`(第一次用可能需要点一下"Configure account"给 Render 访问你 GitHub 仓库的权限)
+4. 进入配置页面,按下面填:
+   - **Name**:随便起,比如 `case-quiz`(这个名字会影响最终域名)
+   - **Language / Runtime**:选 `Node`
+   - **Build Command**:填 `npm install`
+   - **Start Command**:填 `npm start`
+   - **Instance Type**:选 `Free`
+5. 往下找到 `Environment Variables`(环境变量)部分,点 `Add Environment Variable`,添加:
+   - Key 填 `HOST_PASSWORD`,Value 填你自己定的主持人密码(**不要用默认的 host2024**)
+6. 确认无误后点最下面的 `Create Web Service`
+
+### 第三步:等待部署、拿到域名
+
+1. 点完之后会自动跳到服务详情页,能看到实时构建日志(大概1-3分钟)
+2. **页面顶部会直接显示分配给你的网址**,格式类似 `https://case-quiz-xxxx.onrender.com`(xxxx 是随机后缀,如果名字没被占用有时候就是纯 `https://case-quiz.onrender.com`)
+3. 看到日志里出现"病例答题比赛服务已启动"、状态变成绿色的 `Live`,就说明部署成功了
+
+### 第四步:把域名同步给二维码
+
+1. 打开你拿到的这个网址,会看到主持人登录页,输入你在环境变量里设置的密码登录
+2. 顶部"参赛入口网址"输入框里,粘贴同一个网址(比如 `https://case-quiz-xxxx.onrender.com`),点"更新并重新生成二维码"
+3. 点右上角"打开大屏幕"新标签页确认二维码显示正常,用手机微信扫一下测试能不能正常进入答题页
+
+以后每次改代码想更新,只要 `git add . && git commit -m "改动说明" && git push`,Render 会自动重新部署,不需要在网页上手动操作。
+
+> 关于"网址会不会自动同步"的说明:主持人控制台里更新的网址会保存在服务器上的 `config.local.json` 文件里(不是改 `config.js` 本身),重启服务/重新部署后这个文件**在 Render 免费版上不保证一定保留**(免费版偶尔会重建容器)。如果重启后发现二维码变回了旧地址,回到主持人控制台重新粘贴一次网址、点更新即可,不影响正在进行的比赛数据(成绩不受影响,只是二维码指向的地址需要重新填一下)。如果想要一个"重启也不会丢"的默认值,把最终确定的网址也同步写进 `config.js` 里的 `SITE_URL` 字段,`git push` 一次即可长期生效。
+
+> 别忘了第二篇聊到的"免费版15分钟无请求会休眠、下次访问要等最多1分钟醒来"的问题——活动开始前提前几分钟打开一次网址"唤醒"服务,或者用 [UptimeRobot](https://uptimerobot.com) 免费版每5分钟自动访问一次,活动全程保持在线。
 
 ## 四、怎么修改题目
 
@@ -152,6 +194,11 @@ SCORE_SPEED_BONUS_PER_SEC: 5,   // 剩余每秒钟的速度加成
 改这两个数字,保存后在主持人控制台点"重新加载配置",实际计分逻辑和大屏幕底部显示的说明文字**都会用这两个新值**,不需要分别改两个地方——两者现在读的是同一份配置,不存在"改了公式但说明文字没跟着变"的问题。
 
 如果想改的不是这两个参数,而是整个计分公式的计算方式(比如想改成阶梯式给分、或者不考虑速度只看对错),那还是需要改 `server.js` 里 `player:answer` 那部分的代码逻辑,这种结构性改动没法只靠配置文件解决,改完记得也去 `screen.html` 里把说明文字的拼接逻辑一并调整,让文字准确描述新公式。
+
+## 九点八、迟到的人怎么加入 & 最终成绩统计
+
+- 答题/公布答案阶段,大屏幕排行榜下方会常驻显示一个小二维码,内容和中间那个大二维码一样,方便中途加入的人随时扫码进入,不用等主持人重新切回"未开始"状态
+- 主持人点"结束比赛"后,大屏幕的最终排名会显示每个人的**正确数 / 错误数 / 未答数**,按分数从高到低排列。"未答"是按实际出过的题目数量算的(如果提前结束比赛,不会按100道全算,只算真正出过的那几题)
 
 ## 九、安全性说明(内部活动够用,更高要求可以继续加固)
 

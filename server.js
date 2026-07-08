@@ -14,7 +14,7 @@ const QRCode = require('qrcode');
 
 // ============ 配置区(部署前请修改) ============
 const PORT = process.env.PORT || 3000;
-const HOST_PASSWORD = process.env.HOST_PASSWORD || 'Ydy2026';     // 主持人控制台密码(大屏幕不再单独设密码,入口只在主持人登录后开放)
+const HOST_PASSWORD = process.env.HOST_PASSWORD || 'host2024';     // 主持人控制台密码(大屏幕不再单独设密码,入口只在主持人登录后开放)
 const QUESTIONS_FILE = path.join(__dirname, 'questions.md');
 const SCORES_FILE = path.join(__dirname, 'scores.json'); // 用于崩溃/重启后恢复成绩
 const CONFIG_FILE = path.join(__dirname, 'config.js');
@@ -164,12 +164,16 @@ function currentStatePayload() {
 }
 
 function currentLeaderboard(limit) {
-  const list = Object.entries(scores).map(([id, v]) => ({
-    id,
-    name: v.name,
-    score: v.score,
-    correct: v.correct,
-  }));
+  // 已出过的题目数(不管是不是刚好在这一题的答题/公布阶段),用来算"未答"数量——
+  // 用这个而不是题库总数TOTAL,是因为如果主持人提前结束比赛,"未答"应该按实际出过的题算,不能按100道算
+  const questionsAsked = quizState.idx >= 0 ? quizState.idx + 1 : 0;
+  const list = Object.entries(scores).map(([id, v]) => {
+    const correct = v.correct || 0;
+    const answeredCount = v.answered ? Object.keys(v.answered).length : 0;
+    const wrong = Math.max(0, answeredCount - correct);
+    const unanswered = Math.max(0, questionsAsked - answeredCount);
+    return { id, name: v.name, score: v.score, correct, wrong, unanswered };
+  });
   list.sort((a, b) => b.score - a.score);
   return limit ? list.slice(0, limit) : list;
 }

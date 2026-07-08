@@ -1,0 +1,4 @@
+node_modules/
+scores.json
+config.local.json
+.env
