@@ -28,15 +28,6 @@
   <h2>主持人控制台</h2>
 
   <div class="host-row">
-    <label class="muted">参赛入口网址(大屏幕二维码指向的地址):</label>
-  </div>
-  <div class="host-row">
-    <input type="text" id="site-url-input" placeholder="例如 http://192.168.1.100:3000 或 https://your-app.onrender.com" style="flex:1; min-width:260px;">
-    <button class="secondary" onclick="updateSiteUrl()">更新并重新生成二维码</button>
-  </div>
-  <div class="error-text" id="site-url-msg"></div>
-
-  <div class="host-row" style="margin-top:22px;">
     <label class="muted">每题答题时间(秒):</label>
     <input type="number" id="time-limit" value="20" min="5" max="120" style="width:90px;">
   </div>
@@ -45,19 +36,35 @@
     <button class="secondary" id="btn-reveal" onclick="hostAction('reveal')">公布答案</button>
     <button class="secondary" id="btn-finish" onclick="hostAction('finish')">结束比赛(显示最终排名)</button>
   </div>
-  <div class="host-row">
-    <button class="secondary" onclick="hostAction('reload_questions')">重新加载题库(改完 questions.md 后点这个)</button>
-    <button class="secondary" onclick="hostAction('reload_config')">重新加载配置(改完 config.js 后点这个)</button>
-  </div>
-  <div class="host-row">
-    <button class="danger" onclick="if(confirm('确定要重置比赛并清空所有成绩吗?'))hostAction('reset')">重置比赛(清空成绩,测试用)</button>
-  </div>
   <div class="error-text" id="action-error"></div>
   <div class="host-status">
     <div class="stat"><div class="n" id="host-idx">-</div><div class="muted">当前题号 / 总数</div></div>
     <div class="stat"><div class="n" id="host-phase">waiting</div><div class="muted">当前阶段</div></div>
   </div>
+
   <div class="host-qpreview" id="host-qpreview">点击"开始 / 下一题"进入第 1 题</div>
+
+  <details class="advanced-options">
+    <summary>高级选项(网址 / 题库 / 配置)</summary>
+
+    <div class="host-row" style="margin-top:16px;">
+      <label class="muted">参赛入口网址(大屏幕二维码指向的地址):</label>
+    </div>
+    <div class="host-row">
+      <input type="text" id="site-url-input" placeholder="例如 http://192.168.1.100:3000 或 https://your-app.onrender.com" style="flex:1; min-width:260px;">
+      <button class="secondary" onclick="updateSiteUrl()">更新并重新生成二维码</button>
+    </div>
+    <div class="error-text" id="site-url-msg"></div>
+
+    <div class="host-row" style="margin-top:8px;">
+      <button class="secondary" onclick="hostAction('reload_questions')">重新加载题库(改完 questions.md 后点这个)</button>
+      <button class="secondary" onclick="hostAction('reload_config')">重新加载配置(改完 config.js 后点这个)</button>
+    </div>
+  </details>
+
+  <div class="host-row" style="margin-top:8px;">
+    <button class="danger" onclick="if(confirm('确定要重置比赛并清空所有成绩吗?'))hostAction('reset')">重置比赛(清空成绩,测试用)</button>
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -104,25 +111,43 @@ function updateSiteUrl(){
 
 const LETTERS = ['A','B','C','D'];
 let hostState = { idx:-1, phase:'waiting', total:0, question:null };
+let hostQuestionData = null; // 来自 host:question,始终带正确答案,不受phase影响
 
 socket.on('state:update', (payload)=>{
   hostState = payload;
   renderHost();
 });
 
+socket.on('host:question', (payload)=>{
+  hostQuestionData = payload;
+  renderQuestionPreview();
+});
+
 function renderHost(){
   document.getElementById('host-idx').textContent = hostState.idx>=0 ? (hostState.idx+1)+' / '+hostState.total : '-';
   document.getElementById('host-phase').textContent = hostState.phase;
-  const preview = document.getElementById('host-qpreview');
-  if(hostState.idx>=0 && hostState.question){
-    const q = hostState.question;
-    const answerLine = (q.correct!==undefined) ? `<br><span class="ans">正确答案:${LETTERS[q.correct]}. ${q.options[q.correct]}</span>` : '<br><span class="muted">(公布答案前,此处不显示正确项)</span>';
-    preview.innerHTML = `第${hostState.idx+1}题:${q.text}${answerLine}`;
-  } else {
-    preview.textContent = '点击"开始 / 下一题"进入第 1 题';
-  }
   document.getElementById('btn-reveal').disabled = (hostState.phase!=='question');
   // "结束比赛"不再限制必须到最后一题+已公布答案才能点——主持人随时可以提前结束
+}
+
+function renderQuestionPreview(){
+  const preview = document.getElementById('host-qpreview');
+  if(!hostQuestionData || hostQuestionData.idx < 0 || !hostQuestionData.question){
+    preview.innerHTML = '点击"开始 / 下一题"进入第 1 题';
+    return;
+  }
+  const q = hostQuestionData.question;
+  preview.innerHTML = `
+    <div class="host-qtext">第${hostQuestionData.idx+1}题:${q.text}</div>
+    <div class="host-opts">
+      ${[0,1,2,3].map(i => `
+        <div class="host-opt${i===q.correct?' correct':''}">
+          <span class="host-opt-badge">${LETTERS[i]}</span>
+          <span>${q.options[i]}</span>
+          ${i===q.correct?'<span class="host-opt-tag">✓ 正确答案</span>':''}
+        </div>`).join('')}
+    </div>
+  `;
 }
 
 function hostAction(action){

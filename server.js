@@ -196,6 +196,24 @@ function broadcastConfig() {
   io.emit('config:update', publicClientConfig());
 }
 
+// 记录已通过密码认证的主持人连接,用来单独推送"始终带正确答案"的题目数据——
+// 这个数据只发给主持人自己,不会经过 state:update 广播给玩家/大屏幕(那边的数据在公布答案前依然不含正确项,防止被看到)
+const hostSockets = new Set();
+function currentHostQuestionPayload() {
+  if (quizState.idx < 0 || quizState.idx >= TOTAL) {
+    return { idx: quizState.idx, question: null };
+  }
+  const q = questions[quizState.idx];
+  return { idx: quizState.idx, question: { text: q.text, options: q.options, correct: q.correct } };
+}
+function broadcastHostQuestion() {
+  const payload = currentHostQuestionPayload();
+  for (const id of hostSockets) {
+    const s = io.sockets.sockets.get(id);
+    if (s) s.emit('host:question', payload);
+  }
+}
+
 io.on('connection', (socket) => {
   // 新连接立即同步当前状态和排行榜
   socket.emit('state:update', currentStatePayload());
@@ -205,6 +223,10 @@ io.on('connection', (socket) => {
   // 主持人密码校验(大屏幕不再需要密码,只能通过主持人登录后的入口打开)
   socket.on('auth', ({ role, password }, cb) => {
     const ok = role === 'host' && password === HOST_PASSWORD;
+    if (ok) {
+      hostSockets.add(socket.id);
+      socket.emit('host:question', currentHostQuestionPayload());
+    }
     cb && cb({ ok, siteUrl: ok ? appConfig.SITE_URL : undefined });
   });
 
@@ -268,6 +290,7 @@ io.on('connection', (socket) => {
     broadcastState();
     broadcastLeaderboard();
     broadcastConfig();
+    broadcastHostQuestion();
     cb && cb({ ok: true, total: TOTAL });
   });
 
@@ -319,6 +342,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    hostSockets.delete(socket.id);
     // 成绩保存在内存的 scores 对象里,以客户端持久化的 playerId 为 key(不是 socket.id),
     // 所以断线不会丢分——重连后客户端带着同一个 playerId 重新 player:join 即可恢复
   });
